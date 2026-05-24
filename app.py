@@ -1,43 +1,44 @@
-from flask import Flask, request, send_file, jsonify
+from flask import Flask, request, jsonify
 import os
-import json
 import secrets
 import bcrypt
+import psycopg2
 
 app = Flask(__name__)
 
-USERS_FILE = "users.json"
-PLAYERS_DIR = "players"
+DATABASE_URL = os.environ.get(
+    "DATABASE_URL",
+    "postgresql://angrybirds_user:Fhd9e6o2p6WA6v5D6MM8tTphf2CDQyLJ@dpg-d89kn4gg4nts739m9qug-a.oregon-postgres.render.com/angrybirds"
+)
 
 
-def ensure_files():
-    if not os.path.exists(USERS_FILE):
-        with open(USERS_FILE, "w") as f:
-            json.dump({}, f)
-
-    if not os.path.exists(PLAYERS_DIR):
-        os.makedirs(PLAYERS_DIR)
+def get_conn():
+    return psycopg2.connect(DATABASE_URL)
 
 
-def load_users():
-    ensure_files()
-    with open(USERS_FILE, "r") as f:
-        return json.load(f)
+def init_db():
+    conn = get_conn()
+    cur = conn.cursor()
 
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id SERIAL PRIMARY KEY,
+            username TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            token TEXT UNIQUE NOT NULL
+        )
+    """)
 
-def save_users(users):
-    with open(USERS_FILE, "w") as f:
-        json.dump(users, f, indent=4)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS profiles (
+            user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+            profile_data TEXT DEFAULT ''
+        )
+    """)
 
-
-def get_username_from_token(token):
-    users = load_users()
-
-    for user, info in users.items():
-        if info["token"] == token:
-            return user
-
-    return None
+    conn.commit()
+    cur.close()
+    conn.close()
 
 
 def hash_password(password):
@@ -48,14 +49,27 @@ def hash_password(password):
 
 
 def verify_password(stored_password, provided_password):
-    if stored_password.startswith("$2"):
-        return bcrypt.checkpw(
-            provided_password.encode("utf-8"),
-            stored_password.encode("utf-8")
-        )
+    return bcrypt.checkpw(
+        provided_password.encode("utf-8"),
+        stored_password.encode("utf-8")
+    )
 
-    # compat mode for old plaintext accounts
-    return stored_password == provided_password
+
+def get_user_by_token(token):
+    conn = get_conn()
+    cur = conn.cursor()
+
+    cur.execute(
+        "SELECT id, username FROM users WHERE token = %s",
+        (token,)
+    )
+
+    row = cur.fetchone()
+
+    cur.close()
+    conn.close()
+
+    return row
 
 
 @app.post("/signup")
@@ -65,24 +79,50 @@ def signup():
     username = data["username"]
     password = data["password"]
 
-    users = load_users()
+    conn = get_conn()
+    cur = conn.cursor()
 
-    if username in users:
+    cur.execute(
+        "SELECT id FROM users WHERE username = %s",
+        (username,)
+    )
+
+    if cur.fetchone():
+        cur.close()
+        conn.close()
         return jsonify(ok=False)
 
     token = secrets.token_hex(16)
 
-    users[username] = {
-        "password": hash_password(password),
-        "token": token
-    }
-
-    save_users(users)
-
-    os.makedirs(
-        os.path.join(PLAYERS_DIR, username),
-        exist_ok=True
+    cur.execute(
+        """
+        INSERT INTO users (username, password_hash, token)
+        VALUES (%s, %s, %s)
+        RETURNING id
+        """,
+        (
+            username,
+            hash_password(password),
+            token
+        )
     )
+
+    user_id = cur.fetchone()[0]
+
+    cur.execute(
+        """
+        INSERT INTO profiles (user_id, profile_data)
+        VALUES (%s, %s)
+        """,
+        (
+            user_id,
+            ""
+        )
+    )
+
+    conn.commit()
+    cur.close()
+    conn.close()
 
     return jsonify(
         ok=True,
@@ -97,65 +137,37 @@ def login():
     username = data["username"]
     password = data["password"]
 
-    users = load_users()
+    conn = get_conn()
+    cur = conn.cursor()
 
-    if username not in users:
+    cur.execute(
+        """
+        SELECT password_hash, token
+        FROM users
+        WHERE username = %s
+        """,
+        (username,)
+    )
+
+    row = cur.fetchone()
+
+    cur.close()
+    conn.close()
+
+    if not row:
         return jsonify(ok=False)
 
-    stored_password = users[username]["password"]
+    password_hash, token = row
 
     if not verify_password(
-        stored_password,
+        password_hash,
         password
     ):
         return jsonify(ok=False)
 
     return jsonify(
         ok=True,
-        token=users[username]["token"]
-    )
-
-
-@app.post("/save")
-def save():
-    token = request.form["token"]
-    file = request.files["save"]
-
-    username = get_username_from_token(token)
-
-    if username is None:
-        return jsonify(ok=False)
-
-    save_path = os.path.join(
-        PLAYERS_DIR,
-        username,
-        "player"
-    )
-
-    file.save(save_path)
-
-    return jsonify(ok=True)
-
-
-@app.get("/load/<token>")
-def load(token):
-    username = get_username_from_token(token)
-
-    if username is None:
-        return jsonify(ok=False)
-
-    save_path = os.path.join(
-        PLAYERS_DIR,
-        username,
-        "player"
-    )
-
-    if not os.path.exists(save_path):
-        return jsonify(ok=False)
-
-    return send_file(
-        save_path,
-        mimetype="application/octet-stream"
+        token=token
     )
 
 
@@ -166,60 +178,85 @@ def saveprofile():
     token = data["token"]
     profile = data["profile"]
 
-    username = get_username_from_token(token)
+    user = get_user_by_token(token)
 
-    if username is None:
+    if not user:
         return jsonify(ok=False)
 
-    profile_path = os.path.join(
-        PLAYERS_DIR,
-        username,
-        "profile.txt"
+    user_id = user[0]
+
+    conn = get_conn()
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        UPDATE profiles
+        SET profile_data = %s
+        WHERE user_id = %s
+        """,
+        (
+            profile,
+            user_id
+        )
     )
 
-    with open(
-        profile_path,
-        "w",
-        encoding="utf-8"
-    ) as f:
-        f.write(profile)
+    conn.commit()
+    cur.close()
+    conn.close()
 
     return jsonify(ok=True)
 
 
 @app.get("/loadprofile/<token>")
 def loadprofile(token):
-    username = get_username_from_token(token)
+    user = get_user_by_token(token)
 
-    if username is None:
-        return jsonify(ok=False)
-
-    profile_path = os.path.join(
-        PLAYERS_DIR,
-        username,
-        "profile.txt"
-    )
-
-    if not os.path.exists(profile_path):
+    if not user:
         return jsonify(
             ok=False,
             profile=""
         )
 
-    with open(
-        profile_path,
-        "r",
-        encoding="utf-8"
-    ) as f:
-        profile = f.read()
+    user_id = user[0]
+
+    conn = get_conn()
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        SELECT profile_data
+        FROM profiles
+        WHERE user_id = %s
+        """,
+        (user_id,)
+    )
+
+    row = cur.fetchone()
+
+    cur.close()
+    conn.close()
+
+    if not row:
+        return jsonify(
+            ok=False,
+            profile=""
+        )
 
     return jsonify(
         ok=True,
-        profile=profile
+        profile=row[0]
     )
 
 
+@app.get("/")
+def home():
+    return "Backend online"
+
+
+init_db()
+
 app.run(
     host="0.0.0.0",
-    port=8080
+    port=int(os.environ.get("PORT", 8080))
+)
 )
