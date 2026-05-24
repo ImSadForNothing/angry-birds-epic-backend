@@ -1,0 +1,6 @@
+services:
+  - type: web
+    name: angry-birds-epic-backend
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app
