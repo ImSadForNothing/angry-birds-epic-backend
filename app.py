@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, Response
 import os
 import secrets
 import bcrypt
@@ -6,10 +6,7 @@ import psycopg2
 
 app = Flask(__name__)
 
-DATABASE_URL = os.environ.get(
-    "DATABASE_URL",
-    "postgresql://angrybirds_user:Fhd9e6o2p6WA6v5D6MM8tTphf2CDQyLJ@dpg-d89kn4gg4nts739m9qug-a.oregon-postgres.render.com/angrybirds"
-)
+DATABASE_URL = os.environ.get("DATABASE_URL")
 
 
 def get_conn():
@@ -33,6 +30,13 @@ def init_db():
         CREATE TABLE IF NOT EXISTS profiles (
             user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
             profile_data TEXT DEFAULT ''
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS savegames (
+            user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+            save_blob BYTEA
         )
     """)
 
@@ -114,20 +118,22 @@ def signup():
         INSERT INTO profiles (user_id, profile_data)
         VALUES (%s, %s)
         """,
-        (
-            user_id,
-            ""
-        )
+        (user_id, "")
+    )
+
+    cur.execute(
+        """
+        INSERT INTO savegames (user_id, save_blob)
+        VALUES (%s, NULL)
+        """,
+        (user_id,)
     )
 
     conn.commit()
     cur.close()
     conn.close()
 
-    return jsonify(
-        ok=True,
-        token=token
-    )
+    return jsonify(ok=True, token=token)
 
 
 @app.post("/login")
@@ -159,16 +165,10 @@ def login():
 
     password_hash, token = row
 
-    if not verify_password(
-        password_hash,
-        password
-    ):
+    if not verify_password(password_hash, password):
         return jsonify(ok=False)
 
-    return jsonify(
-        ok=True,
-        token=token
-    )
+    return jsonify(ok=True, token=token)
 
 
 @app.post("/saveprofile")
@@ -194,10 +194,7 @@ def saveprofile():
         SET profile_data = %s
         WHERE user_id = %s
         """,
-        (
-            profile,
-            user_id
-        )
+        (profile, user_id)
     )
 
     conn.commit()
@@ -212,10 +209,7 @@ def loadprofile(token):
     user = get_user_by_token(token)
 
     if not user:
-        return jsonify(
-            ok=False,
-            profile=""
-        )
+        return jsonify(ok=False, profile="")
 
     user_id = user[0]
 
@@ -237,14 +231,75 @@ def loadprofile(token):
     conn.close()
 
     if not row:
-        return jsonify(
-            ok=False,
-            profile=""
-        )
+        return jsonify(ok=False, profile="")
 
-    return jsonify(
-        ok=True,
-        profile=row[0]
+    return jsonify(ok=True, profile=row[0])
+
+
+@app.post("/save")
+def save():
+    token = request.form["token"]
+    file = request.files["save"]
+
+    user = get_user_by_token(token)
+
+    if not user:
+        return jsonify(ok=False)
+
+    user_id = user[0]
+    save_data = file.read()
+
+    conn = get_conn()
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        UPDATE savegames
+        SET save_blob = %s
+        WHERE user_id = %s
+        """,
+        (psycopg2.Binary(save_data), user_id)
+    )
+
+    conn.commit()
+    cur.close()
+    conn.close()
+
+    return jsonify(ok=True)
+
+
+@app.get("/load/<token>")
+def load(token):
+    user = get_user_by_token(token)
+
+    if not user:
+        return jsonify(ok=False)
+
+    user_id = user[0]
+
+    conn = get_conn()
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        SELECT save_blob
+        FROM savegames
+        WHERE user_id = %s
+        """,
+        (user_id,)
+    )
+
+    row = cur.fetchone()
+
+    cur.close()
+    conn.close()
+
+    if not row or row[0] is None:
+        return jsonify(ok=False)
+
+    return Response(
+        row[0],
+        mimetype="application/octet-stream"
     )
 
 
