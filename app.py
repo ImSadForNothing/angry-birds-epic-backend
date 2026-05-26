@@ -308,9 +308,10 @@ def home():
     return "Backend online"
 
 
-init_db()
+@app.get("/health")
+def health():
+    return jsonify(ok=True)
 
-app.run(
-    host="0.0.0.0",
-    port=int(os.environ.get("PORT", 8080))
-)
+
+if __name__ == "__main__":
+    init_db()
