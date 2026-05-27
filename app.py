@@ -17,16 +17,17 @@ def init_db():
     conn = get_conn()
     cur = conn.cursor()
 
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            id SERIAL PRIMARY KEY,
-            username TEXT UNIQUE NOT NULL,
-            password_hash TEXT NOT NULL,
-            token TEXT UNIQUE NOT NULL,
-            device_id TEXT
-        )
-    """)
-    try:
+   cur.execute("""
+    CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        username TEXT UNIQUE NOT NULL,
+        password_hash TEXT NOT NULL,
+        token TEXT UNIQUE NOT NULL,
+        device_id TEXT
+    )
+""")
+
+try:
     cur.execute(
         "ALTER TABLE users ADD COLUMN device_id TEXT"
     )
