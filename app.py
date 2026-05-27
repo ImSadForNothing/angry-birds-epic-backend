@@ -27,12 +27,12 @@ def init_db():
         )
     """)
 
-    try:
-        cur.execute(
-            "ALTER TABLE users ADD COLUMN device_id TEXT"
-        )
-    except:
-        pass
+    cur.execute(
+    """
+    ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS device_id TEXT
+    """
+)
 
     cur.execute("""
         CREATE TABLE IF NOT EXISTS profiles (
