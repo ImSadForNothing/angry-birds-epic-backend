@@ -169,6 +169,23 @@ def login():
 
     if not verify_password(password_hash, password):
         return jsonify(ok=False)
+        
+if device_id:
+    conn = get_conn()
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        UPDATE users
+        SET device_id = %s
+        WHERE username = %s
+        """,
+        (device_id, username)
+    )
+
+    conn.commit()
+    cur.close()
+    conn.close()
 
     return jsonify(ok=True, token=token)
 
