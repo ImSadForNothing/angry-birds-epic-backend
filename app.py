@@ -83,6 +83,7 @@ def signup():
 
     username = data["username"]
     password = data["password"]
+    device_id = data.get("device_id", "")
 
     conn = get_conn()
     cur = conn.cursor()
