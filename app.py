@@ -102,14 +102,15 @@ def signup():
 
     cur.execute(
         """
-        INSERT INTO users (username, password_hash, token)
-        VALUES (%s, %s, %s)
+        INSERT INTO users (username, password_hash, token, device_id)
+        VALUES (%s, %s, %s, %s)
         RETURNING id
         """,
         (
             username,
             hash_password(password),
-            token
+            token,
+            device_id
         )
     )
 
@@ -144,6 +145,7 @@ def login():
 
     username = data["username"]
     password = data["password"]
+    device_id = data.get("device_id", "")
 
     conn = get_conn()
     cur = conn.cursor()
@@ -159,35 +161,68 @@ def login():
 
     row = cur.fetchone()
 
-    cur.close()
-    conn.close()
-
     if not row:
+        cur.close()
+        conn.close()
         return jsonify(ok=False)
 
     password_hash, token = row
 
     if not verify_password(password_hash, password):
+        cur.close()
+        conn.close()
         return jsonify(ok=False)
-        
-if device_id:
-    conn = get_conn()
-    cur = conn.cursor()
 
-    cur.execute(
-        """
-        UPDATE users
-        SET device_id = %s
-        WHERE username = %s
-        """,
-        (device_id, username)
-    )
+    if device_id:
+        cur.execute(
+            """
+            UPDATE users
+            SET device_id = %s
+            WHERE username = %s
+            """,
+            (device_id, username)
+        )
 
     conn.commit()
     cur.close()
     conn.close()
 
     return jsonify(ok=True, token=token)
+
+
+@app.post("/device-login")
+def device_login():
+    data = request.get_json(force=True)
+
+    device_id = data.get("device_id", "")
+
+    if not device_id:
+        return jsonify(ok=False)
+
+    conn = get_conn()
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        SELECT token
+        FROM users
+        WHERE device_id = %s
+        """,
+        (device_id,)
+    )
+
+    row = cur.fetchone()
+
+    cur.close()
+    conn.close()
+
+    if not row:
+        return jsonify(ok=False)
+
+    return jsonify(
+        ok=True,
+        token=row[0]
+    )
 
 
 @app.post("/saveprofile")
@@ -319,39 +354,6 @@ def load(token):
     return Response(
         row[0],
         mimetype="application/octet-stream"
-    )
-    @app.post("/device-login")
-def device_login():
-    data = request.get_json(force=True)
-
-    device_id = data.get("device_id", "")
-
-    if not device_id:
-        return jsonify(ok=False)
-
-    conn = get_conn()
-    cur = conn.cursor()
-
-    cur.execute(
-        """
-        SELECT token
-        FROM users
-        WHERE device_id = %s
-        """,
-        (device_id,)
-    )
-
-    row = cur.fetchone()
-
-    cur.close()
-    conn.close()
-
-    if not row:
-        return jsonify(ok=False)
-
-    return jsonify(
-        ok=True,
-        token=row[0]
     )
 
 
