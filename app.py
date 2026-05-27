@@ -22,7 +22,8 @@ def init_db():
             id SERIAL PRIMARY KEY,
             username TEXT UNIQUE NOT NULL,
             password_hash TEXT NOT NULL,
-            token TEXT UNIQUE NOT NULL
+            token TEXT UNIQUE NOT NULL,
+            device_id TEXT
         )
     """)
 
