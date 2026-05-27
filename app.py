@@ -17,22 +17,22 @@ def init_db():
     conn = get_conn()
     cur = conn.cursor()
 
-   cur.execute("""
-    CREATE TABLE IF NOT EXISTS users (
-        id SERIAL PRIMARY KEY,
-        username TEXT UNIQUE NOT NULL,
-        password_hash TEXT NOT NULL,
-        token TEXT UNIQUE NOT NULL,
-        device_id TEXT
-    )
-""")
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id SERIAL PRIMARY KEY,
+            username TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            token TEXT UNIQUE NOT NULL,
+            device_id TEXT
+        )
+    """)
 
-try:
-    cur.execute(
-        "ALTER TABLE users ADD COLUMN device_id TEXT"
-    )
-except:
-    pass
+    try:
+        cur.execute(
+            "ALTER TABLE users ADD COLUMN device_id TEXT"
+        )
+    except:
+        pass
 
     cur.execute("""
         CREATE TABLE IF NOT EXISTS profiles (
@@ -109,7 +109,12 @@ def signup():
 
     cur.execute(
         """
-        INSERT INTO users (username, password_hash, token, device_id)
+        INSERT INTO users (
+            username,
+            password_hash,
+            token,
+            device_id
+        )
         VALUES (%s, %s, %s, %s)
         RETURNING id
         """,
@@ -125,7 +130,10 @@ def signup():
 
     cur.execute(
         """
-        INSERT INTO profiles (user_id, profile_data)
+        INSERT INTO profiles (
+            user_id,
+            profile_data
+        )
         VALUES (%s, %s)
         """,
         (user_id, "")
@@ -133,7 +141,10 @@ def signup():
 
     cur.execute(
         """
-        INSERT INTO savegames (user_id, save_blob)
+        INSERT INTO savegames (
+            user_id,
+            save_blob
+        )
         VALUES (%s, NULL)
         """,
         (user_id,)
@@ -375,4 +386,7 @@ def health():
 
 
 if __name__ == "__main__":
+    init_db()
+
+else:
     init_db()
