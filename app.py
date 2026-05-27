@@ -320,6 +320,39 @@ def load(token):
         row[0],
         mimetype="application/octet-stream"
     )
+    @app.post("/device-login")
+def device_login():
+    data = request.get_json(force=True)
+
+    device_id = data.get("device_id", "")
+
+    if not device_id:
+        return jsonify(ok=False)
+
+    conn = get_conn()
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        SELECT token
+        FROM users
+        WHERE device_id = %s
+        """,
+        (device_id,)
+    )
+
+    row = cur.fetchone()
+
+    cur.close()
+    conn.close()
+
+    if not row:
+        return jsonify(ok=False)
+
+    return jsonify(
+        ok=True,
+        token=row[0]
+    )
 
 
 @app.get("/")
