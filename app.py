@@ -7,6 +7,20 @@ import sqlite3
 DB_NAME = "accounts.db"
 def get_conn():
     return sqlite3.connect(DB_NAME)
+def init_db():
+    conn = get_conn()
+    cur = conn.cursor()
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS users (
+        username TEXT PRIMARY KEY,
+        password TEXT,
+        token TEXT
+    )
+    """)
+
+    conn.commit()
+    conn.close()
 
 app = Flask(__name__)
 
