@@ -4,6 +4,7 @@ import secrets
 import bcrypt
 import sqlite3
 
+DB_NAME = "accounts.db"
 
 app = Flask(__name__)
 
