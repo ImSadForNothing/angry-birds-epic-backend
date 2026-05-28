@@ -1,12 +1,26 @@
-from flask import Flask, request, jsonify, Response
-import os
-import secrets
-import bcrypt
+from flask import Flask, request, jsonify, send_file
 import sqlite3
+import bcrypt
+import uuid
+import os
+
+app = Flask(__name__)
 
 DB_NAME = "accounts.db"
+SAVE_FOLDER = "saves"
+
+if not os.path.exists(SAVE_FOLDER):
+    os.makedirs(SAVE_FOLDER)
+
+
+# =========================
+# DATABASE
+# =========================
+
 def get_conn():
     return sqlite3.connect(DB_NAME)
+
+
 def init_db():
     conn = get_conn()
     cur = conn.cursor()
@@ -14,388 +28,227 @@ def init_db():
     cur.execute("""
     CREATE TABLE IF NOT EXISTS users (
         username TEXT PRIMARY KEY,
-        password TEXT,
-        token TEXT
+        password TEXT NOT NULL,
+        token TEXT NOT NULL
     )
     """)
 
     conn.commit()
     conn.close()
 
-app = Flask(__name__)
 
+init_db()
 
 
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            id SERIAL PRIMARY KEY,
-            username TEXT UNIQUE NOT NULL,
-            password_hash TEXT NOT NULL,
-            token TEXT UNIQUE NOT NULL,
-            device_id TEXT
-        )
-    """)
+# =========================
+# ROOT
+# =========================
 
-    cur.execute(
-    """
-    ALTER TABLE users
-    ADD COLUMN IF NOT EXISTS device_id TEXT
-    """
-)
-
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS profiles (
-            user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-            profile_data TEXT DEFAULT ''
-        )
-    """)
-
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS savegames (
-            user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-            save_blob BYTEA
-        )
-    """)
-
-    conn.commit()
-    cur.close()
-    conn.close()
-
-
-def hash_password(password):
-    return bcrypt.hashpw(
-        password.encode("utf-8"),
-        bcrypt.gensalt()
-    ).decode("utf-8")
-
-
-def verify_password(stored_password, provided_password):
-    return bcrypt.checkpw(
-        provided_password.encode("utf-8"),
-        stored_password.encode("utf-8")
-    )
-
-
-def get_user_by_token(token):
-    conn = get_conn()
-    cur = conn.cursor()
-
-    cur.execute(
-        "SELECT id, username FROM users WHERE token = %s",
-        (token,)
-    )
-
-    row = cur.fetchone()
-
-    cur.close()
-    conn.close()
-
-    return row
-
-
-@app.post("/signup")
-def signup():
-    data = request.get_json(force=True)
-
-    username = data["username"]
-    password = data["password"]
-    device_id = data.get("device_id", "")
-
-    conn = get_conn()
-    cur = conn.cursor()
-
-    cur.execute(
-        "SELECT id FROM users WHERE username = %s",
-        (username,)
-    )
-
-    if cur.fetchone():
-        cur.close()
-        conn.close()
-        return jsonify(ok=False)
-
-    token = secrets.token_hex(16)
-
-    cur.execute(
-        """
-        INSERT INTO users (
-            username,
-            password_hash,
-            token,
-            device_id
-        )
-        VALUES (%s, %s, %s, %s)
-        RETURNING id
-        """,
-        (
-            username,
-            hash_password(password),
-            token,
-            device_id
-        )
-    )
-
-    user_id = cur.fetchone()[0]
-
-    cur.execute(
-        """
-        INSERT INTO profiles (
-            user_id,
-            profile_data
-        )
-        VALUES (%s, %s)
-        """,
-        (user_id, "")
-    )
-
-    cur.execute(
-        """
-        INSERT INTO savegames (
-            user_id,
-            save_blob
-        )
-        VALUES (%s, NULL)
-        """,
-        (user_id,)
-    )
-
-    conn.commit()
-    cur.close()
-    conn.close()
-
-    return jsonify(ok=True, token=token)
-
-
-@app.post("/login")
-def login():
-    data = request.get_json(force=True)
-
-    username = data["username"]
-    password = data["password"]
-    device_id = data.get("device_id", "")
-
-    conn = get_conn()
-    cur = conn.cursor()
-
-    cur.execute(
-        """
-        SELECT password_hash, token
-        FROM users
-        WHERE username = %s
-        """,
-        (username,)
-    )
-
-    row = cur.fetchone()
-
-    if not row:
-        cur.close()
-        conn.close()
-        return jsonify(ok=False)
-
-    password_hash, token = row
-
-    if not verify_password(password_hash, password):
-        cur.close()
-        conn.close()
-        return jsonify(ok=False)
-
-    if device_id:
-        cur.execute(
-            """
-            UPDATE users
-            SET device_id = %s
-            WHERE username = %s
-            """,
-            (device_id, username)
-        )
-
-    conn.commit()
-    cur.close()
-    conn.close()
-
-    return jsonify(ok=True, token=token)
-
-
-@app.post("/device-login")
-def device_login():
-    data = request.get_json(force=True)
-
-    device_id = data.get("device_id", "")
-
-    if not device_id:
-        return jsonify(ok=False)
-
-    conn = get_conn()
-    cur = conn.cursor()
-
-    cur.execute(
-        """
-        SELECT token
-        FROM users
-        WHERE device_id = %s
-        """,
-        (device_id,)
-    )
-
-    row = cur.fetchone()
-
-    cur.close()
-    conn.close()
-
-    if not row:
-        return jsonify(ok=False)
-
-    return jsonify(
-        ok=True,
-        token=row[0]
-    )
-
-
-@app.post("/saveprofile")
-def saveprofile():
-    data = request.get_json(force=True)
-
-    token = data["token"]
-    profile = data["profile"]
-
-    user = get_user_by_token(token)
-
-    if not user:
-        return jsonify(ok=False)
-
-    user_id = user[0]
-
-    conn = get_conn()
-    cur = conn.cursor()
-
-    cur.execute(
-        """
-        UPDATE profiles
-        SET profile_data = %s
-        WHERE user_id = %s
-        """,
-        (profile, user_id)
-    )
-
-    conn.commit()
-    cur.close()
-    conn.close()
-
-    return jsonify(ok=True)
-
-
-@app.get("/loadprofile/<token>")
-def loadprofile(token):
-    user = get_user_by_token(token)
-
-    if not user:
-        return jsonify(ok=False, profile="")
-
-    user_id = user[0]
-
-    conn = get_conn()
-    cur = conn.cursor()
-
-    cur.execute(
-        """
-        SELECT profile_data
-        FROM profiles
-        WHERE user_id = %s
-        """,
-        (user_id,)
-    )
-
-    row = cur.fetchone()
-
-    cur.close()
-    conn.close()
-
-    if not row:
-        return jsonify(ok=False, profile="")
-
-    return jsonify(ok=True, profile=row[0])
-
-
-@app.post("/save")
-def save():
-    token = request.form["token"]
-    file = request.files["save"]
-
-    user = get_user_by_token(token)
-
-    if not user:
-        return jsonify(ok=False)
-
-    user_id = user[0]
-    save_data = file.read()
-
-    conn = get_conn()
-    cur = conn.cursor()
-
-    cur.execute(
-        """
-        UPDATE savegames
-        SET save_blob = %s
-        WHERE user_id = %s
-        """,
-        (psycopg2.Binary(save_data), user_id)
-    )
-
-    conn.commit()
-    cur.close()
-    conn.close()
-
-    return jsonify(ok=True)
-
-
-@app.get("/load/<token>")
-def load(token):
-    user = get_user_by_token(token)
-
-    if not user:
-        return jsonify(ok=False)
-
-    user_id = user[0]
-
-    conn = get_conn()
-    cur = conn.cursor()
-
-    cur.execute(
-        """
-        SELECT save_blob
-        FROM savegames
-        WHERE user_id = %s
-        """,
-        (user_id,)
-    )
-
-    row = cur.fetchone()
-
-    cur.close()
-    conn.close()
-
-    if not row or row[0] is None:
-        return jsonify(ok=False)
-
-    return Response(
-        row[0],
-        mimetype="application/octet-stream"
-    )
-
-
-@app.get("/")
+@app.route("/")
 def home():
-    return "Backend online"
+    return "Spirit Backend Online"
 
 
-@app.get("/health")
-def health():
-    return jsonify(ok=True)
+# =========================
+# SIGNUP
+# =========================
 
+@app.route("/signup", methods=["POST"])
+def signup():
+    try:
+        data = request.get_json()
+
+        username = data.get("username", "").strip()
+        password = data.get("password", "").strip()
+
+        if username == "" or password == "":
+            return jsonify({
+                "ok": False,
+                "message": "Missing data"
+            })
+
+        conn = get_conn()
+        cur = conn.cursor()
+
+        cur.execute(
+            "SELECT username FROM users WHERE username=?",
+            (username,)
+        )
+
+        existing = cur.fetchone()
+
+        if existing is not None:
+            conn.close()
+
+            return jsonify({
+                "ok": False,
+                "message": "Username already exists"
+            })
+
+        hashed = bcrypt.hashpw(
+            password.encode(),
+            bcrypt.gensalt()
+        ).decode()
+
+        token = str(uuid.uuid4())
+
+        cur.execute(
+            "INSERT INTO users VALUES (?, ?, ?)",
+            (
+                username,
+                hashed,
+                token
+            )
+        )
+
+        conn.commit()
+        conn.close()
+
+        return jsonify({
+            "ok": True,
+            "token": token
+        })
+
+    except Exception as ex:
+        return jsonify({
+            "ok": False,
+            "message": str(ex)
+        })
+
+
+# =========================
+# LOGIN
+# =========================
+
+@app.route("/login", methods=["POST"])
+def login():
+    try:
+        data = request.get_json()
+
+        username = data.get("username", "").strip()
+        password = data.get("password", "").strip()
+
+        conn = get_conn()
+        cur = conn.cursor()
+
+        cur.execute(
+            "SELECT password, token FROM users WHERE username=?",
+            (username,)
+        )
+
+        row = cur.fetchone()
+
+        conn.close()
+
+        if row is None:
+            return jsonify({
+                "ok": False,
+                "message": "User not found"
+            })
+
+        hashed_password = row[0]
+        token = row[1]
+
+        if not bcrypt.checkpw(
+            password.encode(),
+            hashed_password.encode()
+        ):
+            return jsonify({
+                "ok": False,
+                "message": "Wrong password"
+            })
+
+        return jsonify({
+            "ok": True,
+            "token": token
+        })
+
+    except Exception as ex:
+        return jsonify({
+            "ok": False,
+            "message": str(ex)
+        })
+
+
+# =========================
+# SAVE UPLOAD
+# =========================
+
+@app.route("/save", methods=["POST"])
+def save():
+    try:
+        token = request.form.get("token")
+
+        if token is None or token == "":
+            return jsonify({
+                "ok": False,
+                "message": "Missing token"
+            })
+
+        if "save" not in request.files:
+            return jsonify({
+                "ok": False,
+                "message": "Missing save file"
+            })
+
+        save_file = request.files["save"]
+
+        path = os.path.join(
+            SAVE_FOLDER,
+            token + ".dat"
+        )
+
+        save_file.save(path)
+
+        return jsonify({
+            "ok": True
+        })
+
+    except Exception as ex:
+        return jsonify({
+            "ok": False,
+            "message": str(ex)
+        })
+
+
+# =========================
+# SAVE DOWNLOAD
+# =========================
+
+@app.route("/load/<token>", methods=["GET"])
+def load(token):
+    try:
+        path = os.path.join(
+            SAVE_FOLDER,
+            token + ".dat"
+        )
+
+        if not os.path.exists(path):
+            return jsonify({
+                "ok": False,
+                "message": "Save not found"
+            })
+
+        return send_file(
+            path,
+            as_attachment=True
+        )
+
+    except Exception as ex:
+        return jsonify({
+            "ok": False,
+            "message": str(ex)
+        })
+
+
+# =========================
+# START
+# =========================
 
 if __name__ == "__main__":
-    init_db()
+    port = int(os.environ.get("PORT", 5000))
 
-else:
-    init_db()
+    app.run(
+        host="0.0.0.0",
+        port=port
+    )
