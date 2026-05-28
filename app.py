@@ -2,7 +2,7 @@ from flask import Flask, request, jsonify, Response
 import os
 import secrets
 import bcrypt
-import psycopg2
+
 
 app = Flask(__name__)
 
