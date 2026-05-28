@@ -6,16 +6,7 @@ import bcrypt
 
 app = Flask(__name__)
 
-DATABASE_URL = os.environ.get("DATABASE_URL")
 
-
-def get_conn():
-    return psycopg2.connect(DATABASE_URL)
-
-
-def init_db():
-    conn = get_conn()
-    cur = conn.cursor()
 
     cur.execute("""
         CREATE TABLE IF NOT EXISTS users (
