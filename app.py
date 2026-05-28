@@ -5,6 +5,8 @@ import bcrypt
 import sqlite3
 
 DB_NAME = "accounts.db"
+def get_conn():
+    return sqlite3.connect(DB_NAME)
 
 app = Flask(__name__)
 
